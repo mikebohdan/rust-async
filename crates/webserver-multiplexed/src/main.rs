@@ -1,23 +1,11 @@
 use std::collections::HashMap;
 use std::io;
-use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 
 use epoll::{ControlOptions::*, Event, Events};
-
-enum ConnectionState {
-  Read {
-    request: [u8; 1024],
-    read: usize,
-  },
-  Write {
-    response: &'static [u8],
-    written: usize,
-  },
-  Flush,
-  Done,
-}
+use handler_non_blocking::connection::{NonBlocking, self};
+use handler_non_blocking::handler::handler;
 
 fn main() {
   let epoll = epoll::create(false).unwrap();
@@ -37,7 +25,7 @@ fn main() {
 
     let mut completed = Vec::new();
 
-    'next: for event in &events[..num_events] {
+    for event in &events[..num_events] {
       let fd = event.data as i32;
 
       if fd == listener.as_raw_fd() {
@@ -49,102 +37,35 @@ fn main() {
             let event = Event::new(Events::EPOLLIN | Events::EPOLLOUT, fd as _);
             epoll::ctl(epoll, EPOLL_CTL_ADD, fd, event).unwrap();
 
-            let state = ConnectionState::Read {
-              request: [0u8; 1024],
-              read: 0,
-            };
-
-            connections.insert(fd, (connection, state));
+            connections.insert(fd, NonBlocking::new(connection));
           }
           Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
           Err(e) => panic!("{e}"),
         }
 
-        continue 'next;
+        continue;
       }
 
-      let (connection, state) = connections.get_mut(&fd).unwrap();
+      let connection = connections.get_mut(&fd).unwrap();
 
-      if let ConnectionState::Read { request, read } = state {
-        loop {
-          // try reading from the stream
-          match connection.read(&mut request[*read..]) {
-            Ok(0) => {
-              println!("client disconnected unexpectedly");
-              completed.push(fd); // 👈
-              continue 'next;
-            }
-            Ok(n) => *read += n,
-            // not ready yet, move on to the next connection
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue 'next,
-            Err(e) => panic!("{e}"),
-          }
-
-          if request.get(*read - 4..*read) == Some(b"\r\n\r\n") {
-            break;
+      match connection.handle(handler) {
+        Ok(_) => {
+          if connection.is_done() {
+            completed.push(fd);
           }
         }
-
-        let request = String::from_utf8_lossy(&request[..*read]);
-        println!("{request}");
-
-        let response = concat!(
-          "HTTP/1.1 200 OK\r\n",
-          "Content-Length: 12\n",
-          "Connection: close\r\n\r\n",
-          "Hello world!"
-        );
-
-        *state = ConnectionState::Write {
-          response: response.as_bytes(),
-          written: 0,
-        };
-      }
-
-      if let ConnectionState::Write { response, written } = state {
-        loop {
-          match connection.write(&response[*written..]) {
-            Ok(0) => {
-              println!("client disconnected unexpectedly");
-              completed.push(fd);
-              continue 'next;
-            }
-            Ok(n) => {
-              *written += n;
-            }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-              // not ready yet, move on to the next connection
-              continue 'next;
-            }
-            Err(e) => panic!("{e}"),
-          }
-
-          // did we write the whole response yet?
-          if *written == response.len() {
-            break;
-          }
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+          continue;
         }
-
-        *state = ConnectionState::Flush;
-      }
-
-      if let ConnectionState::Flush = state {
-        match connection.flush() {
-          Ok(_) => {
-            completed.push(fd); // 👈
-          }
-          Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-            // not ready yet, move on to the next connection
-            continue 'next;
-          }
-          Err(e) => panic!("{e}"),
+        Err(e) => {
+          panic!("{e}");
         }
       }
 
       for fd in &completed {
-        let (connection, _state) = connections.remove(fd).unwrap();
+        let connection = connections.remove(fd).unwrap();
         // unregister from epoll
-        drop(connection);
+        connection.drop();
       }
     }
   }

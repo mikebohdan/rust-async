@@ -7,3 +7,4 @@ edition.workspace = true
 
 [dependencies]
 epoll = "4.3"
+handler-non-blocking = { path = "../handler-non-blocking" }
