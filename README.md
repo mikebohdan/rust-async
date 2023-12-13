@@ -28,3 +28,8 @@ docker run -d -p 3000:3000 rust-async <executable-name>
 - [Guide](https://ibraheem.ca/posts/too-many-web-servers/#a-non-blocking-server)
 - [Crate](./crates/webserver-non-blocking/)
 - **Binary Name** `webserver-non-blocking`
+
+## A Multiplexed Server
+- [Guide](https://ibraheem.ca/posts/too-many-web-servers/#a-multiplexed-server)
+- [Crate](./crates/webserver-multiplexed/)
+- **Binary Name** `webserver-multiplexed`
