@@ -4,7 +4,7 @@ use std::net::TcpListener;
 use std::os::fd::AsRawFd;
 
 use epoll::{ControlOptions::*, Event, Events};
-use handler_non_blocking::connection::{NonBlocking, self};
+use handler_non_blocking::connection::NonBlocking;
 use handler_non_blocking::handler::handler;
 
 fn main() {
